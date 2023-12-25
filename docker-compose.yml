@@ -34,12 +34,5 @@ services:
     networks:
       - net
 
-  tmp:
-    build:
-      context: tmp
-      dockerfile: Dockerfile
-    networks:
-      - net
-
 networks:
   net:
