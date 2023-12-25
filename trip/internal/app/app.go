@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
+	_ "github.com/lib/pq"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -25,6 +28,7 @@ type App struct {
 	Config                *models.Config
 	Logger                *zap.Logger
 	Tracer                trace.Tracer
+	Postgres              *sql.DB
 }
 
 func NewApp(ctx context.Context) *App {
@@ -48,6 +52,15 @@ func NewApp(ctx context.Context) *App {
 		sugLog.Fatalf("Config init error. %v", err)
 		return nil
 	}
+
+	// Подключение к postgres
+	sugLog.Info("Initializing postgres")
+	postgres, err := initPostgres(config.PostgresHost, config.PostgresPort, config.PostgresUser, config.PostgresPass)
+	if err != nil {
+		sugLog.Fatalf("Postgres init error. %v", err)
+		return nil
+	}
+	sugLog.Info("Postgres connected")
 
 	// Подключение к Kafka
 	connClient, err := kfk.ConnectKafka(ctx, config.KafkaAddress, "trip-client-topic", 0)
@@ -75,6 +88,7 @@ func NewApp(ctx context.Context) *App {
 		Config:                config,
 		Logger:                logger,
 		Tracer:                tracer,
+		Postgres:              postgres,
 	}
 	sugLog.Info("App created")
 
@@ -148,7 +162,24 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 
-		// TODO: запись в postgres
+		// Сохранение в Postgres
+		a.Logger.Info("Writing to postgres")
+		err = sendPostgres(a.Postgres, &models.Trip{
+			Id:              response.Id,
+			Source:          response.Source,
+			Type:            response.Type,
+			DataContentType: response.DataContentType,
+			Time:            response.Time,
+			DriverId:        commandData.DriverId,
+			Status:          "DRIVER_FOUND",
+		})
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "Postgres write error")
+			a.Logger.Sugar().Errorf("Postgres write error. %v", err)
+			return
+		}
+		a.Logger.Info("Written correctly")
 
 		// Создание ответной data
 		eventData := models.EventAcceptData{
@@ -178,7 +209,24 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 
-		// TODO: запись в postgres
+		// Сохранение в Postgres
+		a.Logger.Info("Writing to postgres")
+		err = sendPostgres(a.Postgres, &models.Trip{
+			Id:              response.Id,
+			Source:          response.Source,
+			Type:            response.Type,
+			DataContentType: response.DataContentType,
+			Time:            response.Time,
+			Reason:          commandData.Reason,
+			Status:          "CANCELED",
+		})
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "Postgres write error")
+			a.Logger.Sugar().Errorf("Postgres write error. %v", err)
+			return
+		}
+		a.Logger.Info("Written correctly")
 
 		// Создание ответной data
 		eventData := models.EventCancelData{
@@ -209,8 +257,6 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 
-		// TODO: запись в postgres
-
 		// Получение информации из OfferingService
 		order, err := a.getOffer(commandData.OfferId)
 		if err != nil {
@@ -229,6 +275,28 @@ func (a *App) iteration(ctx context.Context) {
 			From:    order.From,
 			To:      order.To,
 		}
+
+		// Сохранение в Postgres
+		a.Logger.Info("Writing to postgres")
+		err = sendPostgres(a.Postgres, &models.Trip{
+			Id:              response.Id,
+			Source:          response.Source,
+			Type:            response.Type,
+			DataContentType: response.DataContentType,
+			Time:            response.Time,
+			OfferId:         eventData.OfferId,
+			Price:           eventData.Price,
+			From:            eventData.From,
+			To:              eventData.To,
+			Status:          "DRIVER_SEARCH",
+		})
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "Postgres write error")
+			a.Logger.Sugar().Errorf("Postgres write error. %v", err)
+			return
+		}
+		a.Logger.Info("Written correctly")
 
 		// Сериализация eventData
 		response.Data, err = json.Marshal(eventData)
@@ -253,7 +321,23 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 
-		// TODO: запись в postgres
+		// Сохранение в Postgres
+		a.Logger.Info("Writing to postgres")
+		err = sendPostgres(a.Postgres, &models.Trip{
+			Id:              response.Id,
+			Source:          response.Source,
+			Type:            response.Type,
+			DataContentType: response.DataContentType,
+			Time:            response.Time,
+			Status:          "ENDED",
+		})
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "Postgres write error")
+			a.Logger.Sugar().Errorf("Postgres write error. %v", err)
+			return
+		}
+		a.Logger.Info("Written correctly")
 
 		// Создание ответной data
 		eventData := models.EventEndData{
@@ -283,7 +367,24 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 
-		// TODO: запись в postgres
+		// Сохранение в Postgres
+		a.Logger.Info("Writing to postgres")
+		err = sendPostgres(a.Postgres, &models.Trip{
+			Id:              response.Id,
+			Source:          response.Source,
+			Type:            response.Type,
+			DataContentType: response.DataContentType,
+			Time:            response.Time,
+			Reason:          commandData.Reason,
+			Status:          "STARTED",
+		})
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "Postgres write error")
+			a.Logger.Sugar().Errorf("Postgres write error. %v", err)
+			return
+		}
+		a.Logger.Info("Written correctly")
 
 		// Создание ответной data
 		eventData := models.EventCancelData{
@@ -346,6 +447,81 @@ func (a *App) getOffer(offerID string) (*models.Order, error) {
 	}
 
 	return &order, nil
+}
+
+// sendPostgres сохраняет запись в postgres
+func sendPostgres(db *sql.DB, trip *models.Trip) error {
+	// SQL-запрос
+	query := `INSERT INTO trips_history
+  	(tripid, source, type, datacontenttype, time, driverid, reason, offerid, price, status, locfrom, locto)
+	VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+
+	// Сериализация объектов в string
+	bytes, err := json.Marshal(trip.Price)
+	if err != nil {
+		return err
+	}
+	price := string(bytes)
+
+	bytes, err = json.Marshal(trip.From)
+	if err != nil {
+		return err
+	}
+	from := string(bytes)
+
+	bytes, err = json.Marshal(trip.To)
+	if err != nil {
+		return err
+	}
+	to := string(bytes)
+
+	// Выполнение запроса
+	_, err = db.Exec(query, trip.Id, trip.Source, trip.Type, trip.DataContentType, trip.Time, trip.DriverId, trip.Reason, trip.OfferId, price, trip.Status, from, to)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// initPostgres инициализирует Postgres
+func initPostgres(host string, port string, user string, password string) (*sql.DB, error) {
+	// Строка подключения к базе данных PostgreSQL
+	connStr := fmt.Sprintf("host=%v port=%v user=%v dbname=postgres sslmode=disable password=%v", host, port, user, password)
+
+	// Открываем соединение с базой данных
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Проверяем соединение с базой данных
+	err = db.Ping()
+	if err != nil {
+		return nil, err
+	}
+
+	// Создание таблицы в postgres
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS trips_history (
+			"id" serial PRIMARY KEY,
+			"tripid" VARCHAR(255),
+    		"source" VARCHAR(255),
+    		"type" VARCHAR(255),
+    		"datacontenttype" VARCHAR(255),
+    		"time" VARCHAR(255),
+    		"driverid" VARCHAR(255),
+    		"reason" VARCHAR(255),
+    		"offerid" VARCHAR(255),
+    		"price" VARCHAR(255),
+    		"status" VARCHAR(255),
+    		"locfrom" VARCHAR(255),
+    		"locto" VARCHAR(255)
+	)`)
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
 // initConfig инициализирует конфиг

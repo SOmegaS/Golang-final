@@ -37,7 +37,7 @@ func NewAdapter(logger *zap.Logger, tracer trace.Tracer, config *models.Config) 
 
 	// Заполнение сервера с созданным роутером
 	adapter.server = &http.Server{
-		Addr:    ":8888",
+		Addr:    ":8080",
 		Handler: router,
 	}
 

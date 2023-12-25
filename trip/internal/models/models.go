@@ -8,6 +8,10 @@ import (
 type Config struct {
 	KafkaAddress    string `json:"kafkaAddress"`
 	OfferingAddress string `json:"offeringAddress"`
+	PostgresHost    string `json:"postgresHost"`
+	PostgresPort    string `json:"postgresPort"`
+	PostgresUser    string `json:"postgresUser"`
+	PostgresPass    string `json:"postgresPass"`
 }
 
 type Order struct {
@@ -15,6 +19,21 @@ type Order struct {
 	To       Location `json:"to"`
 	ClientID string   `json:"client_id"`
 	Price    Price    `json:"price"`
+}
+
+type Trip struct {
+	Id              string    `json:"id"`
+	Source          string    `json:"source"`
+	Type            string    `json:"type"`
+	DataContentType string    `json:"datacontenttype"`
+	Time            time.Time `json:"time"`
+	DriverId        string    `json:"driver_id"`
+	Reason          string    `json:"reason"`
+	OfferId         string    `json:"offer_id"`
+	Price           Price     `json:"price"`
+	Status          string    `json:"status"`
+	From            Location  `json:"from"`
+	To              Location  `json:"to"`
 }
 
 type Request struct {
