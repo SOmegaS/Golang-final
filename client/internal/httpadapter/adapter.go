@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -41,6 +42,15 @@ type Trip struct {
 	Status  string   `bson:"status"`
 }
 
+type OmitUserTrip struct {
+	ID      string   `bson:"id"`
+	OfferID string   `bson:"offer_id"`
+	From    Location `bson:"from"`
+	To      Location `bson:"to"`
+	Price   Price    `bson:"price"`
+	Status  string   `bson:"status"`
+}
+
 type LocationOffering struct {
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
@@ -52,7 +62,6 @@ type PriceOffering struct {
 }
 
 type OrderOffering struct {
-	//ID		 string   `json:"id"`
 	From     Location `json:"from"`
 	To       Location `json:"to"`
 	ClientID string   `json:"client_id"`
@@ -75,26 +84,34 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 	// Query MongoDB for trips based on user_id
 	cursor, err := collection.Find(ctx, bson.M{"user_id": userID})
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		http.Error(w, "Finding element error", http.StatusInternalServerError)
 		return
 	}
 	defer cursor.Close(ctx)
 
 	// Decode MongoDB documents into Trip structs
-	var trips []Trip
+	var trips []OmitUserTrip
 	for cursor.Next(ctx) {
 		var trip Trip
 		if err := cursor.Decode(&trip); err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			http.Error(w, "Decoding error", http.StatusInternalServerError)
 			return
 		}
-		trips = append(trips, trip)
+		respTrip := OmitUserTrip{
+			ID:      trip.ID,
+			OfferID: trip.OfferID,
+			From:    trip.From,
+			To:      trip.To,
+			Price:   trip.Price,
+			Status:  trip.Status,
+		}
+		trips = append(trips, respTrip)
 	}
 
 	// Convert trips to JSON
 	tripsJSON, err := json.Marshal(trips)
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		http.Error(w, "Marshaling error", http.StatusInternalServerError)
 		return
 	}
 
@@ -103,7 +120,7 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 	// Write the JSON response to the client
 	_, err = w.Write(tripsJSON)
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		http.Error(w, "Writing response error", http.StatusInternalServerError)
 		return
 	}
 
@@ -128,6 +145,13 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Count the number of items in the collection
+	count, err := collection.CountDocuments(ctx, bson.M{})
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	resp, err := http.Get("http://localhost:8888/offers/" + incomingOffer.OfferID)
 	bytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -135,6 +159,7 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	defer resp.Body.Close()
 
 	var decodedOrder OrderOffering
 	err = json.Unmarshal(bytes, &decodedOrder)
@@ -144,10 +169,9 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	defer resp.Body.Close()
 	// Insert the offer_id into MongoDB
 	newTrip := Trip{
-		//ID:      decodedOrder.ID,
+		ID:      strconv.FormatInt(count, 10),
 		UserID:  userID,
 		OfferID: incomingOffer.OfferID,
 		From: Location{
@@ -211,8 +235,17 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respTrip := OmitUserTrip{
+		ID:      trip.ID,
+		OfferID: trip.OfferID,
+		From:    trip.From,
+		To:      trip.To,
+		Price:   trip.Price,
+		Status:  trip.Status,
+	}
+
 	// Marshal the result to JSON and send it in the response
-	tripJSON, err := json.Marshal(trip)
+	tripJSON, err := json.Marshal(respTrip)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

@@ -53,18 +53,23 @@ func (a *app) Shutdown() {
 }
 
 // подключение к Mongo
-func initMongo() (*mongo.Client, error) {
+func initMongo(ctx context.Context) (*mongo.Client, error) {
+	logger := zapctx.Logger(ctx)
+	logger.Info("Making MongoDB client")
 	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
+		logger.Error("Failed to create a client", zap.Error(err))
 		log.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx2, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err = client.Connect(ctx)
+
+	logger.Info("Connecting to MongoDB")
+	err = client.Connect(ctx2)
 	if err != nil {
+		logger.Error("Failed to connect", zap.Error(err))
 		log.Fatal(err)
 	}
-	log.Println("Connected to MongoDB")
 	return client, nil
 }
 
@@ -78,7 +83,7 @@ func (a *app) DisconnectMongo() {
 
 func New(ctx context.Context, config *Config) (App, error) {
 	logger := zapctx.Logger(ctx)
-	client, err := initMongo()
+	client, err := initMongo(ctx)
 	if err != nil {
 		logger.Error("Init app error", zap.Error(err))
 		log.Fatal(err)
