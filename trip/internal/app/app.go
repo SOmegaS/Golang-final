@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	_ "github.com/lib/pq"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -25,6 +27,7 @@ type App struct {
 	Config                *models.Config
 	Logger                *zap.Logger
 	Tracer                trace.Tracer
+	Postgres              *sql.DB
 }
 
 func NewApp(ctx context.Context) *App {
@@ -48,6 +51,14 @@ func NewApp(ctx context.Context) *App {
 		sugLog.Fatalf("Config init error. %v", err)
 		return nil
 	}
+
+	sugLog.Info("Initializing postgres")
+	postgres, err := initPostgres()
+	if err != nil {
+		sugLog.Fatalf("Postgres init error. %v", err)
+		return nil
+	}
+	sugLog.Info("Postgres connected")
 
 	// Подключение к Kafka
 	connClient, err := kfk.ConnectKafka(ctx, config.KafkaAddress, "trip-client-topic", 0)
@@ -75,6 +86,7 @@ func NewApp(ctx context.Context) *App {
 		Config:                config,
 		Logger:                logger,
 		Tracer:                tracer,
+		Postgres:              postgres,
 	}
 	sugLog.Info("App created")
 
@@ -346,6 +358,26 @@ func (a *App) getOffer(offerID string) (*models.Order, error) {
 	}
 
 	return &order, nil
+}
+
+func initPostgres() (*sql.DB, error) {
+	// Строка подключения к базе данных PostgreSQL
+	connStr := "host=postgres port=5432 user=admin dbname=trips_history sslmode=disable password=password"
+
+	// Открываем соединение с базой данных
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// Проверяем соединение с базой данных
+	err = db.Ping()
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
 // initConfig инициализирует конфиг
