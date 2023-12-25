@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"trip/internal/app"
 )
 
@@ -11,5 +10,5 @@ func main() {
 
 	newApp := app.NewApp(ctx)
 
-	fmt.Println(newApp)
+	newApp.Start(ctx)
 }

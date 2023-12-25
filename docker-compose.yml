@@ -5,7 +5,7 @@ services:
     environment:
       - ZOOKEEPER_CLIENT_PORT=2181
     networks:
-      - kafka-network
+      - net
 
   kafka:
     image: confluentinc/cp-kafka:latest
@@ -15,16 +15,31 @@ services:
       - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
     networks:
-      - kafka-network
+      - net
 
   trip:
     build:
-      context: .
-      dockerfile: ./Dockerfile
+      context: trip
+      dockerfile: Dockerfile
     networks:
-      - kafka-network
+      - net
     depends_on:
       - kafka
+      - offering
+
+  offering:
+    build:
+      context: offering
+      dockerfile: Dockerfile
+    networks:
+      - net
+
+  tmp:
+    build:
+      context: tmp
+      dockerfile: Dockerfile
+    networks:
+      - net
 
 networks:
-  kafka-network:
+  net:

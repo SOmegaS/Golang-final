@@ -1,3 +1,4 @@
 {
-  "kafkaAddress": "kafka:9092"
+  "kafkaAddress": "kafka:9092",
+  "offeringAddress": "offering:8080"
 }
