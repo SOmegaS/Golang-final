@@ -1,0 +1,8 @@
+{
+  "kafkaAddress": "kafka:9092",
+  "offeringAddress": "offering:8080",
+  "postgresHost": "postgres",
+  "postgresPort": "5432",
+  "postgresUser": "admin",
+  "postgresPass": "password"
+}
