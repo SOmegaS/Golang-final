@@ -121,6 +121,11 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	if userID != decodedOrder.ClientID {
+		http.Error(w, "Wrong user_id", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	newID := uuid.New().String()
 	// Insert the offer_id into MongoDB
