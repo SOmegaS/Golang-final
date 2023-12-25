@@ -12,16 +12,18 @@ import (
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"go.uber.org/zap"
 	"io"
-	"log"
 	"net/http"
 	"time"
 )
 
 type adapter struct {
-	config *models.Config
-	//tracer      trace.Tracer
+	config      *models.Config
+	Tracer      trace.Tracer
 	mongoClient *mongo.Client
 	mongoColl   *mongo.Collection
 	server      *http.Server
@@ -30,7 +32,10 @@ type adapter struct {
 }
 
 func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	// Старт span-а трейсера
+	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
+	defer span.End()
+
 	userID := r.Header.Get("user_id")
 	if userID == "" {
 		http.Error(w, "Missing user_id in header", http.StatusBadRequest)
@@ -40,6 +45,8 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 	// Query MongoDB for trips based on user_id
 	cursor, err := a.mongoColl.Find(ctx, bson.M{"user_id": userID})
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Finding element error")
 		http.Error(w, "Finding element error", http.StatusInternalServerError)
 		return
 	}
@@ -50,6 +57,8 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 	for cursor.Next(ctx) {
 		var trip models.Trip
 		if err := cursor.Decode(&trip); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "Decoding error")
 			http.Error(w, "Decoding error", http.StatusInternalServerError)
 			return
 		}
@@ -67,6 +76,8 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 	// Convert trips to JSON
 	tripsJSON, err := json.Marshal(trips)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Marshaling error")
 		http.Error(w, "Marshaling error", http.StatusInternalServerError)
 		return
 	}
@@ -76,6 +87,8 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 	// Write the JSON response to the client
 	_, err = w.Write(tripsJSON)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Writing response error")
 		http.Error(w, "Writing response error", http.StatusInternalServerError)
 		return
 	}
@@ -84,7 +97,9 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	// Старт span-а трейсера
+	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
+	defer span.End()
 
 	// Retrieve user_id from header
 	userID := r.Header.Get("user_id")
@@ -96,17 +111,23 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	var incomingOffer models.Offer
 	err := json.NewDecoder(r.Body).Decode(&incomingOffer)
 	if err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Decoding error")
+		http.Error(w, "Decoding error", http.StatusBadRequest)
 		return
 	}
 
 	resp, err := http.Get(a.config.OfferingAddress + "/" + incomingOffer.OfferID)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed connecting to offering service")
 		http.Error(w, "Failed connecting to offering service", http.StatusInternalServerError)
 		return
 	}
 	bytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error reading response body")
 		http.Error(w, "Error reading response body", http.StatusBadRequest)
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -117,11 +138,15 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(bytes, &decodedOrder)
 	fmt.Println(decodedOrder)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error decoding JSON request")
 		http.Error(w, "Error decoding JSON request", http.StatusBadRequest)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	if userID != decodedOrder.ClientID {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Wrong user_id")
 		http.Error(w, "Wrong user_id", http.StatusBadRequest)
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -164,19 +189,24 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 
 	kafkaPayload.Data, err = json.Marshal(createTripData)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Kafka payload generating error")
 		http.Error(w, "Kafka payload generating error", http.StatusInternalServerError)
 		return
 	}
 
 	kafkaPayloadJSON, err := json.Marshal(kafkaPayload)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error encoding Kafka payload")
 		http.Error(w, "Error encoding Kafka payload", http.StatusInternalServerError)
 		return
 	}
 
 	err = kfk.SendToTopic(a.connDriver, kafkaPayloadJSON)
 	if err != nil {
-		log.Println("Error sending message to Kafka:", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error sending message to Kafka")
 		http.Error(w, "Error sending message to Kafka", http.StatusInternalServerError)
 		return
 	}
@@ -185,6 +215,8 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	insertResult, err := a.mongoColl.InsertOne(ctx, newTrip)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Insertion error")
 		http.Error(w, "Insertion error", http.StatusInternalServerError)
 		return
 	}
@@ -195,7 +227,9 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	// Старт span-а трейсера
+	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
+	defer span.End()
 
 	// Retrieve user_id from header
 	userID := r.Header.Get("user_id")
@@ -218,10 +252,14 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 	err := a.mongoColl.FindOne(ctx, filter).Decode(&trip)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "Trip not found")
 			http.Error(w, "Trip not found", http.StatusNotFound)
 			return
 		}
 
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Internal server error")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -238,7 +276,9 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 	// Marshal the result to JSON and send it in the response
 	tripJSON, err := json.Marshal(respTrip)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Marshaling error")
+		http.Error(w, "Marshaling error", http.StatusInternalServerError)
 		return
 	}
 
@@ -247,7 +287,9 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	// Старт span-а трейсера
+	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
+	defer span.End()
 
 	// Retrieve user_id from header
 	userID := r.Header.Get("user_id")
@@ -296,6 +338,8 @@ func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
 
 	kafkaPayloadData, err := json.Marshal(cancelTripData)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error generating Kafka payload")
 		http.Error(w, "Kafka payload generating error", http.StatusInternalServerError)
 		return
 	}
@@ -304,13 +348,16 @@ func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
 
 	kafkaPayloadJSON, err := json.Marshal(kafkaPayload)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error encoding Kafka payload")
 		http.Error(w, "Error encoding Kafka payload", http.StatusInternalServerError)
 		return
 	}
 
 	err = kfk.SendToTopic(a.connDriver, kafkaPayloadJSON)
 	if err != nil {
-		log.Println("Error sending message to Kafka:", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error sending message to Kafka")
 		http.Error(w, "Error sending message to Kafka", http.StatusInternalServerError)
 		return
 	}
@@ -318,11 +365,15 @@ func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
 	// Update the document in the collection
 	updateResult, err := a.mongoColl.UpdateOne(ctx, filter, update)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Internal server error")
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	if updateResult.ModifiedCount == 0 {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Trip not found or not authorized")
 		http.Error(w, "Trip not found or not authorized", http.StatusNotFound)
 		return
 	}
@@ -426,13 +477,13 @@ func selectStatus(eventType string) string {
 	return newStatus
 }
 
-func New(ctx context.Context, config *models.Config, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn) Adapter {
+func New(ctx context.Context, config *models.Config, tracer trace.Tracer, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn) Adapter {
 	return &adapter{
 		config:      config,
+		Tracer:      tracer,
 		mongoClient: client,
 		mongoColl:   client.Database(config.DatabaseName).Collection(config.CollName),
 		connTrip:    connTrip,
 		connDriver:  connDriver,
-		//tracer:      ctx.Value("tracer").(trace.Tracer),
 	}
 }

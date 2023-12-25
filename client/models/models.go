@@ -13,6 +13,7 @@ type Config struct {
 	BasePath        string `json:"basePath"`
 	CollName        string `json:"collName"`
 	DatabaseName    string `json:"databaseName"`
+	JaegerAddress   string `json:"jaegerAddress"`
 }
 
 type Location struct {
