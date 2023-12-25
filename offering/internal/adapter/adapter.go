@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"io"
@@ -51,11 +52,14 @@ func (a *Adapter) createOffer(w http.ResponseWriter, r *http.Request) {
 	a.Logger.Info("Creating offer")
 
 	// Старт span-а трейсера
-	a.Tracer.Start(r.Context(), "createOffer")
+	ctx, span := a.Tracer.Start(r.Context(), "createOffer")
+	defer span.End()
 
 	// Считывание bytes из Body
 	bytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Body reading error")
 		w.WriteHeader(http.StatusInternalServerError)
 		a.Logger.Sugar().Errorf("Body reading error. %v", err)
 		return
@@ -65,6 +69,8 @@ func (a *Adapter) createOffer(w http.ResponseWriter, r *http.Request) {
 	order := &models.Order{}
 	err = json.Unmarshal(bytes, order)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Unmarshal body to order error")
 		w.WriteHeader(http.StatusBadRequest)
 		a.Logger.Sugar().Errorf("Unmarshal body to order error. %v", err)
 		return
@@ -74,8 +80,10 @@ func (a *Adapter) createOffer(w http.ResponseWriter, r *http.Request) {
 	order = a.service.CreateOffer(order)
 
 	// Создание jwt-токена
-	jwtOffer, err := a.service.JwtOffer(r.Context(), order)
+	jwtOffer, err := a.service.JwtOffer(ctx, order)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "JWT order error")
 		w.WriteHeader(http.StatusInternalServerError)
 		a.Logger.Sugar().Errorf("JWT order error. %v", err)
 		return
@@ -84,6 +92,8 @@ func (a *Adapter) createOffer(w http.ResponseWriter, r *http.Request) {
 	// Запись ответа
 	_, err = w.Write([]byte(jwtOffer))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Writing response error")
 		w.WriteHeader(http.StatusInternalServerError)
 		a.Logger.Sugar().Errorf("Writing response error. %v", err)
 		return
@@ -98,14 +108,17 @@ func (a *Adapter) getOffer(w http.ResponseWriter, r *http.Request) {
 	a.Logger.Info("Getting offer")
 
 	// Старт span-а трейсера
-	a.Tracer.Start(r.Context(), "getOffer")
+	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
+	defer span.End()
 
 	// Чтение параметра из URL
 	offerID := chi.URLParam(r, "offerID")
 
 	// Извлечение информации из JWT-токена
-	order, err := a.service.UnJwtOffer(r.Context(), offerID)
+	order, err := a.service.UnJwtOffer(ctx, offerID)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Order unjwt error")
 		w.WriteHeader(http.StatusBadRequest)
 		a.Logger.Sugar().Errorf("Order unjwt error. %v", err)
 		return
@@ -114,6 +127,8 @@ func (a *Adapter) getOffer(w http.ResponseWriter, r *http.Request) {
 	// Сериализация Order в bytes
 	bytes, err := json.Marshal(order)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Order marshal error")
 		w.WriteHeader(http.StatusInternalServerError)
 		a.Logger.Sugar().Errorf("Order marshal error. %v", err)
 		return
@@ -122,6 +137,8 @@ func (a *Adapter) getOffer(w http.ResponseWriter, r *http.Request) {
 	// Запись ответа
 	_, err = w.Write(bytes)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Writing response error")
 		w.WriteHeader(http.StatusInternalServerError)
 		a.Logger.Sugar().Errorf("Writing response error. %v", err)
 		return

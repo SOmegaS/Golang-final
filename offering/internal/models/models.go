@@ -20,5 +20,6 @@ type Order struct {
 }
 
 type Config struct {
-	PrivateKey rsa.PrivateKey `json:"privateKey"`
+	PrivateKey    rsa.PrivateKey `json:"privateKey"`
+	JaegerAddress string         `json:"jaegerAddress"`
 }

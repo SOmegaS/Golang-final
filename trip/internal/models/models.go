@@ -12,6 +12,7 @@ type Config struct {
 	PostgresPort    string `json:"postgresPort"`
 	PostgresUser    string `json:"postgresUser"`
 	PostgresPass    string `json:"postgresPass"`
+	JaegerAddress   string `json:"jaegerAddress"`
 }
 
 type Order struct {

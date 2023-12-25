@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/sdk/resource"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"log"
@@ -32,10 +36,6 @@ func NewApp() *App {
 	sugLog := logger.Sugar()
 	sugLog.Info("Logger initialized")
 
-	// Создание трейсера
-	tracer := otel.Tracer("final")
-	sugLog.Info("Tracer created")
-
 	// Инициализация конфига
 	sugLog.Info("Initializing config")
 	config, err := initConfig()
@@ -43,6 +43,20 @@ func NewApp() *App {
 		sugLog.Fatalf("Config init error. %v", err)
 		return nil
 	}
+	sugLog.Info("Config initialized")
+
+	// Инициализация Jaeger
+	sugLog.Info("Initializing Jaeger")
+	err = initJaeger(config.JaegerAddress)
+	if err != nil {
+		sugLog.Fatalf("Jaeger init error. %v", err)
+		return nil
+	}
+	sugLog.Info("Jaeger initialized")
+
+	// Создание трейсера
+	tracer := otel.Tracer("final")
+	sugLog.Info("Tracer created")
 
 	// Создание объекта App
 	sugLog.Info("Creating app")
@@ -65,6 +79,24 @@ func (a *App) Start(ctx context.Context) error {
 		a.Logger.Sugar().Fatalf("App error. %v", err)
 		return err
 	}
+	return nil
+}
+
+// initJaeger подключает Jaeger для трейсинга
+func initJaeger(address string) error {
+	exporter, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint("http://" + address + "/api/traces")))
+	if err != nil {
+		return err
+	}
+	tp := tracesdk.NewTracerProvider(
+		tracesdk.WithBatcher(exporter),
+		tracesdk.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String("offering"),
+			semconv.DeploymentEnvironmentKey.String("production"),
+		)),
+	)
+	otel.SetTracerProvider(tp)
 	return nil
 }
 
