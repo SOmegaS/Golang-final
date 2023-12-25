@@ -1,0 +1,178 @@
+openapi: 3.0.3
+info:
+  title: Client Service
+  version: 1.0.0
+  description: |-
+    Отвечает за управление заказом со стороны клиента (создание, отмена, получение обновлений)
+tags:
+  - name: trip
+    description: Управление заказами клиента
+paths:
+  /trips:
+    get:
+      tags:
+        - trip
+      operationId: getTrips
+      summary: List trips
+      description: List trips
+      parameters:
+        - name : user_id
+          in: header
+          schema:
+            type: string
+            format: uuid
+          required: true
+      responses:
+        '200':
+          description: Success operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Trip'
+    post:
+      tags:
+        - trip
+      summary: Create trip
+      operationId: createTrip
+      parameters:
+        - name : user_id
+          in: header
+          schema:
+            type: string
+            format: uuid
+          required: true
+      requestBody:
+        description: Create new trip
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                offer_id:
+                  description: id of offer from Offering service
+                  type: string
+      responses:
+        '200':
+          description: Success operation
+        '400':
+          description: Incorrect offer id
+  /trips/{trip_id}:
+    get:
+      tags:
+        - trip
+      summary: Get trip by ID
+      operationId: getTripByID
+      parameters:
+        - name : user_id
+          in: header
+          schema:
+            type: string
+            format: uuid
+          required: true
+        - name: trip_id
+          in: path
+          description: ID of created trip
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Success operation
+          content:
+            application:json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '400':
+          description: Incorrect trip id
+        '404':
+          description: trip not found
+  /trip/{trip_id}/cancel:
+    post:
+      tags:
+        - trip
+      summary: Cancel trip
+      operationId: cancelTrip
+      parameters:
+        - name : user_id
+          in: header
+          schema:
+            type: string
+            format: uuid
+          required: true
+        - name: trip_id
+          in: path
+          description: ID of created trip
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: reason
+          in: query
+          description: Reason for trip cancellation
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success operation
+        '404':
+          description: trip not found
+
+
+components:
+  schemas:
+    Trip:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        offer_id:
+          type: string
+        from:
+          $ref: '#/components/schemas/LatLngLiteral'
+        to:
+          $ref: '#/components/schemas/LatLngLiteral'
+        price:
+          $ref: '#/components/schemas/Money'
+        status:
+          type: string
+          enum:
+            - DRIVER_SEARCH
+            - DRIVER_FOUND
+            - ON_POSITION
+            - STARTED
+            - ENDED
+            - CANCELED
+    LatLngLiteral:
+      type: object
+      title: LatLngLiteral
+      description: An object describing a specific location with Latitude and Longitude in decimal degrees.
+      required:
+        - lat
+        - lng
+      properties:
+        lat:
+          type: number
+          description: Latitude in decimal degrees
+        lng:
+          type: number
+          description: Longitude in decimal degrees
+    Money:
+      type: object
+      properties:
+        amount:
+          type: number
+          description: Amount expressed as a decimal number of major currency units
+          format: decimal
+          example: 99.95
+        currency:
+          type: string
+          description: 3 letter currency code as defined by ISO-4217
+          format: iso-4217
+          example: RUB
+      required:
+        - amount
+        - currency
