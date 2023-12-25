@@ -1,0 +1,72 @@
+version: '3'
+services:
+  mongodb:
+    image: mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: my_mongo
+    volumes:
+      - ./data/mongodb:/data/db
+    networks:
+      - client
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+    networks:
+      - client
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    environment:
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    networks:
+      - client
+
+  client:
+    build:
+      context: client
+      dockerfile: .docker/build.Dockerfile
+    ports:
+      - "8080:8080"
+    restart: on-failure
+    depends_on:
+      - kafka
+      - mongodb
+    networks:
+      - client
+
+  offering:
+    build:
+      context: offering
+      dockerfile: Dockerfile
+    ports:
+      - "8888:8888"
+    networks:
+      - client
+
+  trip:
+    build:
+      context: trip
+      dockerfile: Dockerfile
+    networks:
+      - client
+    depends_on:
+      - kafka
+      - offering
+
+  tmp:
+    build:
+      context: tmp
+      dockerfile: Dockerfile
+    networks:
+      - client
+
+networks:
+  client:

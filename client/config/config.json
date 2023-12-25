@@ -1,0 +1,5 @@
+{
+  "mongoIRI": "mongodb://mongodb:27017/my_mongo",
+  "offeringAddress": "http://offering:8888/offers",
+  "kafkaAddress": "kafka:9092"
+}

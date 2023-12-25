@@ -3,15 +3,19 @@ package httpadapter
 import (
 	"context"
 	"encoding/json"
+	"final-project/models"
+	kfk "final-project/pkg/kafka"
 	"fmt"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/juju/zaputil/zapctx"
+	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.uber.org/zap"
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 )
 
@@ -20,56 +24,8 @@ type adapter struct {
 	//tracer      trace.Tracer
 	mongoClient *mongo.Client
 	server      *http.Server
-}
-
-type Location struct {
-	Lat float64 `bson:"lat"`
-	Lng float64 `bson:"lng"`
-}
-
-type Price struct {
-	Amount   float64 `bson:"amount"`
-	Currency string  `bson:"currency"`
-}
-
-type Trip struct {
-	ID      string   `bson:"id"`
-	UserID  string   `bson:"user_id"`
-	OfferID string   `bson:"offer_id"`
-	From    Location `bson:"from"`
-	To      Location `bson:"to"`
-	Price   Price    `bson:"price"`
-	Status  string   `bson:"status"`
-}
-
-type OmitUserTrip struct {
-	ID      string   `bson:"id"`
-	OfferID string   `bson:"offer_id"`
-	From    Location `bson:"from"`
-	To      Location `bson:"to"`
-	Price   Price    `bson:"price"`
-	Status  string   `bson:"status"`
-}
-
-type LocationOffering struct {
-	Lat float64 `json:"lat"`
-	Lng float64 `json:"lng"`
-}
-
-type PriceOffering struct {
-	Amount   float64 `json:"amount"`
-	Currency string  `json:"currency"`
-}
-
-type OrderOffering struct {
-	From     Location `json:"from"`
-	To       Location `json:"to"`
-	ClientID string   `json:"client_id"`
-	Price    Price    `json:"price"`
-}
-
-type Offer struct {
-	OfferID string `json:"offer_id"`
+	connTrip    *kafka.Conn
+	connDriver  *kafka.Conn
 }
 
 func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
@@ -90,14 +46,14 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 	defer cursor.Close(ctx)
 
 	// Decode MongoDB documents into Trip structs
-	var trips []OmitUserTrip
+	var trips []models.OmitUserTrip
 	for cursor.Next(ctx) {
-		var trip Trip
+		var trip models.Trip
 		if err := cursor.Decode(&trip); err != nil {
 			http.Error(w, "Decoding error", http.StatusInternalServerError)
 			return
 		}
-		respTrip := OmitUserTrip{
+		respTrip := models.OmitUserTrip{
 			ID:      trip.ID,
 			OfferID: trip.OfferID,
 			From:    trip.From,
@@ -138,21 +94,18 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var incomingOffer Offer
+	var incomingOffer models.Offer
 	err := json.NewDecoder(r.Body).Decode(&incomingOffer)
 	if err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
-	// Count the number of items in the collection
-	count, err := collection.CountDocuments(ctx, bson.M{})
+	resp, err := http.Get("http://offering:8888/offers/" + incomingOffer.OfferID)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, "Failed connecting to offering service", http.StatusInternalServerError)
 		return
 	}
-
-	resp, err := http.Get("http://localhost:8888/offers/" + incomingOffer.OfferID)
 	bytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		http.Error(w, "Error reading response body", http.StatusBadRequest)
@@ -161,7 +114,7 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	var decodedOrder OrderOffering
+	var decodedOrder models.OrderOffering
 	err = json.Unmarshal(bytes, &decodedOrder)
 	fmt.Println(decodedOrder)
 	if err != nil {
@@ -169,31 +122,66 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
+	newID := uuid.New().String()
 	// Insert the offer_id into MongoDB
-	newTrip := Trip{
-		ID:      strconv.FormatInt(count, 10),
+	newTrip := models.Trip{
+		ID:      newID,
 		UserID:  userID,
 		OfferID: incomingOffer.OfferID,
-		From: Location{
+		From: models.Location{
 			Lat: decodedOrder.From.Lat,
 			Lng: decodedOrder.From.Lng,
 		},
-		To: Location{
+		To: models.Location{
 			Lat: decodedOrder.To.Lat,
 			Lng: decodedOrder.To.Lng,
 		},
-		Price: Price{
+		Price: models.Price{
 			Amount:   decodedOrder.Price.Amount,
 			Currency: decodedOrder.Price.Currency,
 		},
 		Status: "DRIVER_SEARCH",
 	}
+
+	//make kafka payload
+	kafkaPayload := models.Request{
+		Id:              newID,
+		Source:          "/client",
+		Type:            "trip.command.create",
+		DataContentType: "application/json",
+		Time:            time.Now().UTC(),
+		Data:            nil,
+	}
+
+	createTripData := models.CommandCreateData{
+		OfferId: incomingOffer.OfferID,
+	}
+
+	kafkaPayload.Data, err = json.Marshal(createTripData)
+	if err != nil {
+		http.Error(w, "Kafka payload generating error", http.StatusInternalServerError)
+		return
+	}
+
+	kafkaPayloadJSON, err := json.Marshal(kafkaPayload)
+	if err != nil {
+		http.Error(w, "Error encoding Kafka payload", http.StatusInternalServerError)
+		return
+	}
+
+	err = kfk.SendToTopic(a.connDriver, kafkaPayloadJSON)
+	if err != nil {
+		log.Println("Error sending message to Kafka:", err)
+		http.Error(w, "Error sending message to Kafka", http.StatusInternalServerError)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	insertResult, err := collection.InsertOne(ctx, newTrip)
 	if err != nil {
-		log.Println(err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, "Insertion error", http.StatusInternalServerError)
 		return
 	}
 
@@ -223,7 +211,7 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 	filter := bson.M{"id": tripID, "user_id": userID}
 
 	// Find the document in the collection
-	var trip Trip
+	var trip models.Trip
 	err := collection.FindOne(ctx, filter).Decode(&trip)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -235,7 +223,7 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respTrip := OmitUserTrip{
+	respTrip := models.OmitUserTrip{
 		ID:      trip.ID,
 		OfferID: trip.OfferID,
 		From:    trip.From,
@@ -289,6 +277,42 @@ func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	//make kafka payload
+	kafkaPayload := models.Request{
+		Id:              uuid.New().String(),
+		Source:          "/client",
+		Type:            "trip.command.create",
+		DataContentType: "application/json",
+		Time:            time.Now().UTC(),
+		Data:            nil,
+	}
+
+	cancelTripData := models.CommandCancelData{
+		TripId: tripID,
+		Reason: reason,
+	}
+
+	kafkaPayloadData, err := json.Marshal(cancelTripData)
+	if err != nil {
+		http.Error(w, "Kafka payload generating error", http.StatusInternalServerError)
+		return
+	}
+
+	kafkaPayload.Data = kafkaPayloadData
+
+	kafkaPayloadJSON, err := json.Marshal(kafkaPayload)
+	if err != nil {
+		http.Error(w, "Error encoding Kafka payload", http.StatusInternalServerError)
+		return
+	}
+
+	err = kfk.SendToTopic(a.connDriver, kafkaPayloadJSON)
+	if err != nil {
+		log.Println("Error sending message to Kafka:", err)
+		http.Error(w, "Error sending message to Kafka", http.StatusInternalServerError)
+		return
+	}
+
 	// Update the document in the collection
 	updateResult, err := collection.UpdateOne(ctx, filter, update)
 	if err != nil {
@@ -302,7 +326,7 @@ func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Respond with a success message or the updated document ID
-	fmt.Fprintf(w, "Trip canceled successfully. Updated document ID: %v", updateResult.UpsertedID)
+	fmt.Fprintf(w, "Trip canceled successfully")
 }
 
 func (a *adapter) Serve(ctx context.Context) error {
@@ -325,8 +349,21 @@ func (a *adapter) Serve(ctx context.Context) error {
 
 	apiRouter.Mount(a.config.BasePath, apiRouter)
 
-	a.server = &http.Server{Addr: a.config.ServeAddress, Handler: apiRouter}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return // Exit the goroutine if the context is canceled
+			default:
+				// Read and process Kafka messages
+				a.iteration(ctx)
+				time.Sleep(1 * time.Second)
+			}
+		}
+	}()
 
+	// Start the HTTP server
+	a.server = &http.Server{Addr: a.config.ServeAddress, Handler: apiRouter}
 	return a.server.ListenAndServe()
 }
 
@@ -334,10 +371,66 @@ func (a *adapter) Shutdown(ctx context.Context) {
 	_ = a.server.Shutdown(ctx)
 }
 
-func New(ctx context.Context, config *Config, client *mongo.Client) Adapter {
+func (a *adapter) iteration(ctx context.Context) {
+	logger := zapctx.Logger(ctx)
+	collection := a.mongoClient.Database("my_mongo").Collection("trips")
+	// Чтение из Kafka
+	bytes, err := kfk.ReadFromTopic(a.connTrip)
+	if err != nil {
+		logger.Error("Kafka read error. %v", zap.Error(err))
+		return
+	}
+	logger.Info("Message detected")
+
+	// Десериализация запроса
+	var request models.Request
+	err = json.Unmarshal(bytes, &request)
+	if err != nil {
+		logger.Error("Unmarshal error. %v", zap.Error(err))
+		return
+	}
+
+	// Проверка на тип Data
+	if request.DataContentType != "application/json" {
+		logger.Error("Data type error. %v", zap.Error(err))
+		return
+	}
+	var eventData models.EventData
+	err = json.Unmarshal(request.Data, &eventData)
+	if err != nil {
+		logger.Error("Unmarshal error. %v", zap.Error(err))
+		return
+	}
+	filter := bson.M{"id": eventData.TripId}
+	update := bson.M{"$set": bson.M{"status": selectStatus(request.Type)}}
+
+	_, err = collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		logger.Error("MongoDB update error. %v", zap.Error(err))
+		return
+	}
+	logger.Info("MongoDB updated")
+}
+
+func selectStatus(eventType string) string {
+	var newStatus string
+	switch eventType {
+	case "trip.event.accepted":
+		newStatus = "ACCEPTED"
+	case "trip.event.ended":
+		newStatus = "ENDED"
+	case "trip.event.started":
+		newStatus = "STARTED"
+	}
+	return newStatus
+}
+
+func New(ctx context.Context, config *Config, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn) Adapter {
 	return &adapter{
 		config:      config,
 		mongoClient: client,
+		connTrip:    connTrip,
+		connDriver:  connDriver,
 		//tracer:      ctx.Value("tracer").(trace.Tracer),
 	}
 }

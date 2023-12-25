@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"final-project/internal/httpadapter"
+	"final-project/models"
+	kfk "final-project/pkg/kafka"
 	"github.com/juju/zaputil/zapctx"
+	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
@@ -18,9 +22,13 @@ import (
 
 type app struct {
 	//tracer opentracing.Tracer
-	httpAdapter httpadapter.Adapter
-	client      *mongo.Client
+	httpAdapter   httpadapter.Adapter
+	client        *mongo.Client
+	fromTripTopic *kafka.Conn
+	toDriverTopic *kafka.Conn
 }
+
+const configPath = "./config/config.json"
 
 func (a *app) Serve(ctx context.Context) error {
 	done := make(chan os.Signal, 1)
@@ -56,7 +64,7 @@ func (a *app) Shutdown() {
 func initMongo(ctx context.Context) (*mongo.Client, error) {
 	logger := zapctx.Logger(ctx)
 	logger.Info("Making MongoDB client")
-	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
+	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://mongodb:27017/my_mongo"))
 	if err != nil {
 		logger.Error("Failed to create a client", zap.Error(err))
 		log.Fatal(err)
@@ -70,6 +78,10 @@ func initMongo(ctx context.Context) (*mongo.Client, error) {
 		logger.Error("Failed to connect", zap.Error(err))
 		log.Fatal(err)
 	}
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		logger.Error("Failed to ping MongoDB:", zap.Error(err))
+	}
 	return client, nil
 }
 
@@ -81,6 +93,36 @@ func (a *app) DisconnectMongo() {
 	}
 }
 
+func initConfig() (*models.Config, error) {
+	// Получение информации о файле
+	stat, err := os.Stat(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Открытие файла
+	file, err := os.Open(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Считывание bytes
+	data := make([]byte, stat.Size())
+	_, err = file.Read(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Десериализация в конфиг
+	var config models.Config
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
 func New(ctx context.Context, config *Config) (App, error) {
 	logger := zapctx.Logger(ctx)
 	client, err := initMongo(ctx)
@@ -88,9 +130,32 @@ func New(ctx context.Context, config *Config) (App, error) {
 		logger.Error("Init app error", zap.Error(err))
 		log.Fatal(err)
 	}
+
+	logger.Info("Initializing config")
+	config2, err := initConfig()
+	if err != nil {
+		logger.Error("Config init error. %v", zap.Error(err))
+		log.Fatal(err)
+	}
+
+	// Подключение к Kafka
+	connTrip, err := kfk.ConnectKafka(ctx, config2.KafkaAddress, "trip-client-topic", 0)
+	if err != nil {
+		logger.Error("Kafka connect error. %v", zap.Error(err))
+		log.Fatal(err)
+	}
+
+	connDriver, err := kfk.ConnectKafka(ctx, config2.KafkaAddress, "driver-client-trip-topic", 0)
+	if err != nil {
+		logger.Error("Kafka connect error. %v", zap.Error(err))
+		log.Fatal(err)
+	}
+
 	a := &app{
-		httpAdapter: httpadapter.New(ctx, &config.HTTP, client),
-		client:      client,
+		httpAdapter:   httpadapter.New(ctx, &config.HTTP, client, connTrip, connDriver),
+		client:        client,
+		fromTripTopic: connTrip,
+		toDriverTopic: connDriver,
 	}
 
 	return a, nil
