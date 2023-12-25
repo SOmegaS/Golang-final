@@ -82,5 +82,17 @@ services:
       postgres:
         condition: service_healthy
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "14268:14268"
+      - "16686:16686"
+    environment:
+      - SPAN_STORAGE_TYPE=memory
+    networks:
+      - net
+
 networks:
   net:

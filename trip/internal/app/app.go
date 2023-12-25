@@ -9,6 +9,10 @@ import (
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/sdk/resource"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"io"
@@ -41,10 +45,6 @@ func NewApp(ctx context.Context) *App {
 	sugLog := logger.Sugar()
 	sugLog.Info("Logger initialized")
 
-	// Создание трейсера
-	tracer := otel.Tracer("final")
-	sugLog.Info("Tracer created")
-
 	// Инициализация конфига
 	sugLog.Info("Initializing config")
 	config, err := initConfig()
@@ -52,6 +52,19 @@ func NewApp(ctx context.Context) *App {
 		sugLog.Fatalf("Config init error. %v", err)
 		return nil
 	}
+
+	// Инициализация Jaeger
+	sugLog.Info("Initializing Jaeger")
+	err = initJaeger(config.JaegerAddress)
+	if err != nil {
+		sugLog.Fatalf("Jaeger init error. %v", err)
+		return nil
+	}
+	sugLog.Info("Jaeger initialized")
+
+	// Создание трейсера
+	tracer := otel.Tracer("final")
+	sugLog.Info("Tracer created")
 
 	// Подключение к postgres
 	sugLog.Info("Initializing postgres")
@@ -481,6 +494,24 @@ func sendPostgres(db *sql.DB, trip *models.Trip) error {
 		return err
 	}
 
+	return nil
+}
+
+// initJaeger подключает Jaeger для трейсинга
+func initJaeger(address string) error {
+	exporter, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint("http://" + address + "/api/traces")))
+	if err != nil {
+		return err
+	}
+	tp := tracesdk.NewTracerProvider(
+		tracesdk.WithBatcher(exporter),
+		tracesdk.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String("trip"),
+			semconv.DeploymentEnvironmentKey.String("production"),
+		)),
+	)
+	otel.SetTracerProvider(tp)
 	return nil
 }
 
