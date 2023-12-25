@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/juju/zaputil/zapctx"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,16 +23,23 @@ import (
 )
 
 type adapter struct {
-	config      *models.Config
-	Tracer      trace.Tracer
-	mongoClient *mongo.Client
-	mongoColl   *mongo.Collection
-	server      *http.Server
-	connTrip    *kafka.Conn
-	connDriver  *kafka.Conn
+	config        *models.Config
+	mongoClient   *mongo.Client
+	mongoColl     *mongo.Collection
+	server        *http.Server
+	connTrip      *kafka.Conn
+	connDriver    *kafka.Conn
+	RequestsTotal *prometheus.CounterVec
+	ResponseTime  *prometheus.GaugeVec
+	Tracer        trace.Tracer
 }
 
 func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("ListTrips").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("ListTrips").Inc()
+
 	// Старт span-а трейсера
 	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
 	defer span.End()
@@ -97,6 +105,11 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("CreateTrip").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("CreateTrip").Inc()
+
 	// Старт span-а трейсера
 	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
 	defer span.End()
@@ -227,6 +240,11 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("GetTripByID").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("GetTripByID").Inc()
+
 	// Старт span-а трейсера
 	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
 	defer span.End()
@@ -287,6 +305,11 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("CancelTrip").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("CancelTrip").Inc()
+
 	// Старт span-а трейсера
 	ctx, span := a.Tracer.Start(r.Context(), "getOffer")
 	defer span.End()
@@ -477,7 +500,8 @@ func selectStatus(eventType string) string {
 	return newStatus
 }
 
-func New(ctx context.Context, config *models.Config, tracer trace.Tracer, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn) Adapter {
+func New(ctx context.Context, config *models.Config, tracer trace.Tracer, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn,
+	requestsTotal *prometheus.CounterVec, responseTime *prometheus.GaugeVec) Adapter {
 	return &adapter{
 		config:      config,
 		Tracer:      tracer,
@@ -485,5 +509,8 @@ func New(ctx context.Context, config *models.Config, tracer trace.Tracer, client
 		mongoColl:   client.Database(config.DatabaseName).Collection(config.CollName),
 		connTrip:    connTrip,
 		connDriver:  connDriver,
+		//tracer:      ctx.Value("tracer").(trace.Tracer),
+		RequestsTotal: requestsTotal,
+		ResponseTime:  responseTime,
 	}
 }

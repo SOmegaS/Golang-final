@@ -94,5 +94,16 @@ services:
     networks:
       - net
 
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - './prometheus.yaml:/prometheus/config.yaml'
+    command:
+      - '--config.file=/prometheus/config.yaml'
+    networks:
+      - net
+
 networks:
   net:

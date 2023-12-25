@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'client'
+    static_configs:
+      - targets: ['client:80']
+
+  - job_name: 'offering'
+    static_configs:
+      - targets: ['offering:80']
+
+  - job_name: 'trip'
+    static_configs:
+      - targets: ['trip:80']
