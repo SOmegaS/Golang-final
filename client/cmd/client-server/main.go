@@ -4,7 +4,6 @@ import (
 	"context"
 	"final-project/internal/app"
 	"final-project/internal/logger"
-	"fmt"
 	"github.com/juju/zaputil/zapctx"
 	"go.uber.org/zap"
 	"log"
@@ -27,17 +26,8 @@ func main() {
 	shutdown := initProvider(ctx)
 	defer shutdown()
 
-	logger.Info("getting config")
-	config, err := app.NewConfig()
-	if err != nil {
-		logger.Error("getting config error", zap.Error(err))
-		log.Fatal(err)
-	}
-	logger.Info("successfully got config")
-	fmt.Println(config)
-
 	logger.Info("init app")
-	a, err := app.New(ctx, config)
+	a, err := app.New(ctx)
 	if err != nil {
 		logger.Error("init app error", zap.Error(err))
 		log.Fatal(err.Error())

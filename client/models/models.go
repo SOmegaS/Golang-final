@@ -9,6 +9,10 @@ type Config struct {
 	MongoIRI        string `json:"mongoIRI"`
 	OfferingAddress string `json:"offeringAddress"`
 	KafkaAddress    string `json:"kafkaAddress"`
+	ServeAddress    string `json:"serveAddress"`
+	BasePath        string `json:"basePath"`
+	CollName        string `json:"collName"`
+	DatabaseName    string `json:"databaseName"`
 }
 
 type Location struct {

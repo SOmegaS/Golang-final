@@ -10,14 +10,14 @@ services:
     volumes:
       - ./data/mongodb:/data/db
     networks:
-      - client
+      - project
 
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
     environment:
-      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_project_PORT=2181
     networks:
-      - client
+      - project
 
   kafka:
     image: confluentinc/cp-kafka:latest
@@ -27,11 +27,11 @@ services:
       - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
     networks:
-      - client
+      - project
 
-  client:
+  project:
     build:
-      context: client
+      context: project
       dockerfile: .docker/build.Dockerfile
     ports:
       - "8080:8080"
@@ -40,7 +40,7 @@ services:
       - kafka
       - mongodb
     networks:
-      - client
+      - project
 
   offering:
     build:
@@ -49,14 +49,15 @@ services:
     ports:
       - "8888:8888"
     networks:
-      - client
+      - project
 
   trip:
     build:
       context: trip
       dockerfile: Dockerfile
+    restart: on-failure
     networks:
-      - client
+      - project
     depends_on:
       - kafka
       - offering
@@ -66,7 +67,7 @@ services:
       context: tmp
       dockerfile: Dockerfile
     networks:
-      - client
+      - project
 
 networks:
-  client:
+  project:

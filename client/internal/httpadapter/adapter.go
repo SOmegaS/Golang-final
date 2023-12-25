@@ -20,16 +20,16 @@ import (
 )
 
 type adapter struct {
-	config *Config
+	config *models.Config
 	//tracer      trace.Tracer
 	mongoClient *mongo.Client
+	mongoColl   *mongo.Collection
 	server      *http.Server
 	connTrip    *kafka.Conn
 	connDriver  *kafka.Conn
 }
 
 func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
-	collection := a.mongoClient.Database("my_mongo").Collection("trips")
 	ctx := context.Background()
 	userID := r.Header.Get("user_id")
 	if userID == "" {
@@ -38,7 +38,7 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Query MongoDB for trips based on user_id
-	cursor, err := collection.Find(ctx, bson.M{"user_id": userID})
+	cursor, err := a.mongoColl.Find(ctx, bson.M{"user_id": userID})
 	if err != nil {
 		http.Error(w, "Finding element error", http.StatusInternalServerError)
 		return
@@ -84,7 +84,6 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
-	collection := a.mongoClient.Database("my_mongo").Collection("trips")
 	ctx := context.Background()
 
 	// Retrieve user_id from header
@@ -101,7 +100,7 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Get("http://offering:8888/offers/" + incomingOffer.OfferID)
+	resp, err := http.Get(a.config.OfferingAddress + "/" + incomingOffer.OfferID)
 	if err != nil {
 		http.Error(w, "Failed connecting to offering service", http.StatusInternalServerError)
 		return
@@ -179,7 +178,7 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	insertResult, err := collection.InsertOne(ctx, newTrip)
+	insertResult, err := a.mongoColl.InsertOne(ctx, newTrip)
 	if err != nil {
 		http.Error(w, "Insertion error", http.StatusInternalServerError)
 		return
@@ -191,7 +190,6 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
-	collection := a.mongoClient.Database("my_mongo").Collection("trips")
 	ctx := context.Background()
 
 	// Retrieve user_id from header
@@ -212,7 +210,7 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 
 	// Find the document in the collection
 	var trip models.Trip
-	err := collection.FindOne(ctx, filter).Decode(&trip)
+	err := a.mongoColl.FindOne(ctx, filter).Decode(&trip)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, "Trip not found", http.StatusNotFound)
@@ -244,7 +242,6 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
-	collection := a.mongoClient.Database("my_mongo").Collection("trips")
 	ctx := context.Background()
 
 	// Retrieve user_id from header
@@ -314,7 +311,7 @@ func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update the document in the collection
-	updateResult, err := collection.UpdateOne(ctx, filter, update)
+	updateResult, err := a.mongoColl.UpdateOne(ctx, filter, update)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -373,7 +370,6 @@ func (a *adapter) Shutdown(ctx context.Context) {
 
 func (a *adapter) iteration(ctx context.Context) {
 	logger := zapctx.Logger(ctx)
-	collection := a.mongoClient.Database("my_mongo").Collection("trips")
 	// Чтение из Kafka
 	bytes, err := kfk.ReadFromTopic(a.connTrip)
 	if err != nil {
@@ -404,7 +400,7 @@ func (a *adapter) iteration(ctx context.Context) {
 	filter := bson.M{"id": eventData.TripId}
 	update := bson.M{"$set": bson.M{"status": selectStatus(request.Type)}}
 
-	_, err = collection.UpdateOne(ctx, filter, update)
+	_, err = a.mongoColl.UpdateOne(ctx, filter, update)
 	if err != nil {
 		logger.Error("MongoDB update error. %v", zap.Error(err))
 		return
@@ -425,10 +421,11 @@ func selectStatus(eventType string) string {
 	return newStatus
 }
 
-func New(ctx context.Context, config *Config, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn) Adapter {
+func New(ctx context.Context, config *models.Config, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn) Adapter {
 	return &adapter{
 		config:      config,
 		mongoClient: client,
+		mongoColl:   client.Database(config.DatabaseName).Collection(config.CollName),
 		connTrip:    connTrip,
 		connDriver:  connDriver,
 		//tracer:      ctx.Value("tracer").(trace.Tracer),

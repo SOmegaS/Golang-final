@@ -61,10 +61,10 @@ func (a *app) Shutdown() {
 }
 
 // подключение к Mongo
-func initMongo(ctx context.Context) (*mongo.Client, error) {
+func initMongo(ctx context.Context, config *models.Config) (*mongo.Client, error) {
 	logger := zapctx.Logger(ctx)
 	logger.Info("Making MongoDB client")
-	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://mongodb:27017/my_mongo"))
+	client, err := mongo.NewClient(options.Client().ApplyURI(config.MongoIRI))
 	if err != nil {
 		logger.Error("Failed to create a client", zap.Error(err))
 		log.Fatal(err)
@@ -123,36 +123,36 @@ func initConfig() (*models.Config, error) {
 	return &config, nil
 }
 
-func New(ctx context.Context, config *Config) (App, error) {
+func New(ctx context.Context) (App, error) {
 	logger := zapctx.Logger(ctx)
-	client, err := initMongo(ctx)
-	if err != nil {
-		logger.Error("Init app error", zap.Error(err))
-		log.Fatal(err)
-	}
 
 	logger.Info("Initializing config")
-	config2, err := initConfig()
+	config, err := initConfig()
 	if err != nil {
 		logger.Error("Config init error. %v", zap.Error(err))
 		log.Fatal(err)
 	}
 
+	client, err := initMongo(ctx, config)
+	if err != nil {
+		logger.Error("Init app error", zap.Error(err))
+		log.Fatal(err)
+	}
 	// Подключение к Kafka
-	connTrip, err := kfk.ConnectKafka(ctx, config2.KafkaAddress, "trip-client-topic", 0)
+	connTrip, err := kfk.ConnectKafka(ctx, config.KafkaAddress, "trip-client-topic", 0)
 	if err != nil {
 		logger.Error("Kafka connect error. %v", zap.Error(err))
 		log.Fatal(err)
 	}
 
-	connDriver, err := kfk.ConnectKafka(ctx, config2.KafkaAddress, "driver-client-trip-topic", 0)
+	connDriver, err := kfk.ConnectKafka(ctx, config.KafkaAddress, "driver-client-trip-topic", 0)
 	if err != nil {
 		logger.Error("Kafka connect error. %v", zap.Error(err))
 		log.Fatal(err)
 	}
 
 	a := &app{
-		httpAdapter:   httpadapter.New(ctx, &config.HTTP, client, connTrip, connDriver),
+		httpAdapter:   httpadapter.New(ctx, config, client, connTrip, connDriver),
 		client:        client,
 		fromTripTopic: connTrip,
 		toDriverTopic: connDriver,
