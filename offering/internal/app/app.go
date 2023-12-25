@@ -3,10 +3,14 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"log"
+	"net/http"
 	"offering/internal/adapter"
 	"offering/internal/models"
 	"os"
@@ -44,10 +48,15 @@ func NewApp() *App {
 		return nil
 	}
 
+	// Prometheus
+	sugLog.Info("Initializing Prometheus")
+	requestsTotal, responseTime := initPrometheus()
+	sugLog.Info("Prometheus initialized")
+
 	// Создание объекта App
 	sugLog.Info("Creating app")
 	app := App{
-		Adapter: adapter.NewAdapter(logger, tracer, config),
+		Adapter: adapter.NewAdapter(logger, tracer, config, requestsTotal, responseTime),
 		Logger:  logger,
 		Tracer:  tracer,
 		Config:  config,
@@ -97,4 +106,40 @@ func initConfig() (*models.Config, error) {
 	}
 
 	return &config, nil
+}
+
+// initPrometheus инициализация переменных Prometheus
+func initPrometheus() (*prometheus.CounterVec, *prometheus.GaugeVec) {
+	requestsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"method"},
+	)
+	prometheus.MustRegister(requestsTotal)
+
+	responseTime := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "response_time",
+			Help: "Response time of HTTP requests",
+		},
+		[]string{"method"},
+	)
+	prometheus.MustRegister(responseTime)
+
+	// Роутер для prometheus
+	r := chi.NewRouter()
+	r.Handle("/metrics", promhttp.Handler())
+
+	// Сервер для prometheus
+	go func() {
+		server := http.Server{Addr: ":80", Handler: r}
+		err := server.ListenAndServe()
+		if err != nil {
+			return
+		}
+	}()
+
+	return requestsTotal, responseTime
 }

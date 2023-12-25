@@ -7,7 +7,10 @@ import (
 	"final-project/internal/httpadapter"
 	"final-project/models"
 	kfk "final-project/pkg/kafka"
+	"github.com/go-chi/chi/v5"
 	"github.com/juju/zaputil/zapctx"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -138,6 +141,12 @@ func New(ctx context.Context) (App, error) {
 		logger.Error("Init app error", zap.Error(err))
 		log.Fatal(err)
 	}
+
+	// Prometheus
+	logger.Info("Initializing Prometheus")
+	requestsTotal, responseTime := initPrometheus()
+	logger.Info("Prometheus initialized")
+
 	// Подключение к Kafka
 	connTrip, err := kfk.ConnectKafka(ctx, config.KafkaAddress, "trip-client-topic", 0)
 	if err != nil {
@@ -152,11 +161,47 @@ func New(ctx context.Context) (App, error) {
 	}
 
 	a := &app{
-		httpAdapter:   httpadapter.New(ctx, config, client, connTrip, connDriver),
+		httpAdapter:   httpadapter.New(ctx, config, client, connTrip, connDriver, requestsTotal, responseTime),
 		client:        client,
 		fromTripTopic: connTrip,
 		toDriverTopic: connDriver,
 	}
 
 	return a, nil
+}
+
+// initPrometheus инициализация переменных Prometheus
+func initPrometheus() (*prometheus.CounterVec, *prometheus.GaugeVec) {
+	requestsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"method"},
+	)
+	prometheus.MustRegister(requestsTotal)
+
+	responseTime := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "response_time",
+			Help: "Response time of HTTP requests",
+		},
+		[]string{"method"},
+	)
+	prometheus.MustRegister(responseTime)
+
+	// Роутер для prometheus
+	r := chi.NewRouter()
+	r.Handle("/metrics", promhttp.Handler())
+
+	// Сервер для prometheus
+	go func() {
+		server := http.Server{Addr: ":80", Handler: r}
+		err := server.ListenAndServe()
+		if err != nil {
+			return
+		}
+	}()
+
+	return requestsTotal, responseTime
 }

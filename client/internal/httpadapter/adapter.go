@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/juju/zaputil/zapctx"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/segmentio/kafka-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -22,14 +23,21 @@ import (
 type adapter struct {
 	config *models.Config
 	//tracer      trace.Tracer
-	mongoClient *mongo.Client
-	mongoColl   *mongo.Collection
-	server      *http.Server
-	connTrip    *kafka.Conn
-	connDriver  *kafka.Conn
+	mongoClient   *mongo.Client
+	mongoColl     *mongo.Collection
+	server        *http.Server
+	connTrip      *kafka.Conn
+	connDriver    *kafka.Conn
+	RequestsTotal *prometheus.CounterVec
+	ResponseTime  *prometheus.GaugeVec
 }
 
 func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("ListTrips").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("ListTrips").Inc()
+
 	ctx := context.Background()
 	userID := r.Header.Get("user_id")
 	if userID == "" {
@@ -84,6 +92,11 @@ func (a *adapter) ListTrips(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("CreateTrip").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("CreateTrip").Inc()
+
 	ctx := context.Background()
 
 	// Retrieve user_id from header
@@ -195,6 +208,11 @@ func (a *adapter) CreateTrip(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("GetTripByID").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("GetTripByID").Inc()
+
 	ctx := context.Background()
 
 	// Retrieve user_id from header
@@ -247,6 +265,11 @@ func (a *adapter) GetTripByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *adapter) CancelTrip(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("CancelTrip").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("CancelTrip").Inc()
+
 	ctx := context.Background()
 
 	// Retrieve user_id from header
@@ -426,7 +449,8 @@ func selectStatus(eventType string) string {
 	return newStatus
 }
 
-func New(ctx context.Context, config *models.Config, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn) Adapter {
+func New(ctx context.Context, config *models.Config, client *mongo.Client, connTrip *kafka.Conn, connDriver *kafka.Conn,
+	requestsTotal *prometheus.CounterVec, responseTime *prometheus.GaugeVec) Adapter {
 	return &adapter{
 		config:      config,
 		mongoClient: client,
@@ -434,5 +458,7 @@ func New(ctx context.Context, config *models.Config, client *mongo.Client, connT
 		connTrip:    connTrip,
 		connDriver:  connDriver,
 		//tracer:      ctx.Value("tracer").(trace.Tracer),
+		RequestsTotal: requestsTotal,
+		ResponseTime:  responseTime,
 	}
 }

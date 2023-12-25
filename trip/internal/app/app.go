@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/go-chi/chi/v5"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/segmentio/kafka-go"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
@@ -15,6 +18,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 	"trip/internal/models"
 	kfk "trip/pkg/kafka"
 )
@@ -29,6 +33,8 @@ type App struct {
 	Logger                *zap.Logger
 	Tracer                trace.Tracer
 	Postgres              *sql.DB
+	RequestsTotal         *prometheus.CounterVec
+	ResponseTime          *prometheus.GaugeVec
 }
 
 func NewApp(ctx context.Context) *App {
@@ -52,6 +58,11 @@ func NewApp(ctx context.Context) *App {
 		sugLog.Fatalf("Config init error. %v", err)
 		return nil
 	}
+
+	// Prometheus
+	sugLog.Info("Initializing Prometheus")
+	requestsTotal, responseTime := initPrometheus()
+	sugLog.Info("Prometheus initialized")
 
 	// Подключение к postgres
 	sugLog.Info("Initializing postgres")
@@ -89,6 +100,8 @@ func NewApp(ctx context.Context) *App {
 		Logger:                logger,
 		Tracer:                tracer,
 		Postgres:              postgres,
+		RequestsTotal:         requestsTotal,
+		ResponseTime:          responseTime,
 	}
 	sugLog.Info("App created")
 
@@ -148,6 +161,11 @@ func (a *App) iteration(ctx context.Context) {
 	var conn []*kafka.Conn
 	switch request.Type {
 	case "trip.command.accept":
+		// Статистика
+		startTime := time.Now()
+		defer a.ResponseTime.WithLabelValues("trip.command.accept").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+		a.RequestsTotal.WithLabelValues("trip.command.accept").Inc()
+
 		response.Type = "trip.event.accepted"
 		conn = make([]*kafka.Conn, 1)
 		conn[0] = a.ToClientTopic
@@ -195,6 +213,11 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 	case "trip.command.cancel":
+		// Статистика
+		startTime := time.Now()
+		defer a.ResponseTime.WithLabelValues("trip.command.cancel").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+		a.RequestsTotal.WithLabelValues("trip.command.cancel").Inc()
+
 		response.Type = "trip.event.canceled"
 		conn = make([]*kafka.Conn, 1)
 		conn[0] = a.ToDriverTopic
@@ -242,6 +265,11 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 	case "trip.command.create":
+		// Статистика
+		startTime := time.Now()
+		defer a.ResponseTime.WithLabelValues("trip.command.create").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+		a.RequestsTotal.WithLabelValues("trip.command.create").Inc()
+
 		response.Type = "trip.event.created"
 		conn = make([]*kafka.Conn, 2)
 		conn[0] = a.ToDriverTopic
@@ -307,6 +335,11 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 	case "trip.command.end":
+		// Статистика
+		startTime := time.Now()
+		defer a.ResponseTime.WithLabelValues("trip.command.end").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+		a.RequestsTotal.WithLabelValues("trip.command.end").Inc()
+
 		response.Type = "trip.event.ended"
 		conn = make([]*kafka.Conn, 1)
 		conn[0] = a.ToClientTopic
@@ -353,6 +386,11 @@ func (a *App) iteration(ctx context.Context) {
 			return
 		}
 	case "trip.command.start":
+		// Статистика
+		startTime := time.Now()
+		defer a.ResponseTime.WithLabelValues("trip.command.start").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+		a.RequestsTotal.WithLabelValues("trip.command.start").Inc()
+
 		response.Type = "trip.event.started"
 		conn = make([]*kafka.Conn, 1)
 		conn[0] = a.ToClientTopic
@@ -553,4 +591,40 @@ func initConfig() (*models.Config, error) {
 	}
 
 	return &config, nil
+}
+
+// initPrometheus инициализация переменных Prometheus
+func initPrometheus() (*prometheus.CounterVec, *prometheus.GaugeVec) {
+	requestsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"method"},
+	)
+	prometheus.MustRegister(requestsTotal)
+
+	responseTime := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "response_time",
+			Help: "Response time of HTTP requests",
+		},
+		[]string{"method"},
+	)
+	prometheus.MustRegister(responseTime)
+
+	// Роутер для prometheus
+	r := chi.NewRouter()
+	r.Handle("/metrics", promhttp.Handler())
+
+	// Сервер для prometheus
+	go func() {
+		server := http.Server{Addr: ":80", Handler: r}
+		err := server.ListenAndServe()
+		if err != nil {
+			return
+		}
+	}()
+
+	return requestsTotal, responseTime
 }

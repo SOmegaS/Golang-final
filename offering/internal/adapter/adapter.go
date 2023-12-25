@@ -4,30 +4,37 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"io"
 	"net/http"
 	"offering/internal/models"
 	"offering/internal/service"
+	"time"
 )
 
 type Adapter struct {
-	server  *http.Server
-	service *service.Service
-	Logger  *zap.Logger
-	Tracer  trace.Tracer
+	server        *http.Server
+	service       *service.Service
+	Logger        *zap.Logger
+	Tracer        trace.Tracer
+	RequestsTotal *prometheus.CounterVec
+	ResponseTime  *prometheus.GaugeVec
 }
 
-func NewAdapter(logger *zap.Logger, tracer trace.Tracer, config *models.Config) *Adapter {
+func NewAdapter(logger *zap.Logger, tracer trace.Tracer, config *models.Config,
+	requestsTotal *prometheus.CounterVec, responseTime *prometheus.GaugeVec) *Adapter {
 	logger.Info("Creating adapter")
 
 	// Создание адаптера
 	adapter := Adapter{
-		server:  nil, // будет заполнен ниже
-		service: service.NewService(logger, tracer, config),
-		Logger:  logger,
-		Tracer:  tracer,
+		server:        nil, // будет заполнен ниже
+		service:       service.NewService(logger, tracer, config),
+		Logger:        logger,
+		Tracer:        tracer,
+		RequestsTotal: requestsTotal,
+		ResponseTime:  responseTime,
 	}
 
 	// Создание роутера и set путей
@@ -48,6 +55,10 @@ func NewAdapter(logger *zap.Logger, tracer trace.Tracer, config *models.Config) 
 
 // createOffer обрабатывает запрос на создание заказа, возвращает созданный заказ
 func (a *Adapter) createOffer(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("createOffer").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("createOffer").Inc()
 	a.Logger.Info("Creating offer")
 
 	// Старт span-а трейсера
@@ -95,6 +106,10 @@ func (a *Adapter) createOffer(w http.ResponseWriter, r *http.Request) {
 
 // getOffer возвращает заказ при его наличии
 func (a *Adapter) getOffer(w http.ResponseWriter, r *http.Request) {
+	// Статистика
+	startTime := time.Now()
+	defer a.ResponseTime.WithLabelValues("getOffer").Set(float64(time.Now().Sub(startTime).Nanoseconds()))
+	a.RequestsTotal.WithLabelValues("getOffer").Inc()
 	a.Logger.Info("Getting offer")
 
 	// Старт span-а трейсера
