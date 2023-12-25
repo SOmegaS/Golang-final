@@ -9,6 +9,8 @@ services:
       - ./data/mongodb:/data/db
     networks:
       - net
+    ports:
+      - "27017:27017"
 
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
@@ -99,9 +101,28 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - './prometheus.yaml:/prometheus/config.yaml'
+      - './configs/prometheus.yaml:/prometheus/config.yaml'
     command:
       - '--config.file=/prometheus/config.yaml'
+    networks:
+      - net
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=password
+    volumes:
+      - './configs/grafana.datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml'
+      - './configs/grafana.dashboard.yaml:/etc/grafana/provisioning/dashboards/dashboard.yaml'
+      - './configs/dashboard.json:/etc/grafana/provisioning/dashboards/dashboard.json'
+    depends_on:
+      - client
+      - trip
+      - offering
+      - prometheus
     networks:
       - net
 
