@@ -1,6 +1,6 @@
 {
   "mongoIRI": "mongodb://mongodb:27017/my_mongo",
-  "offeringAddress": "http://offering:8888/offers",
+  "offeringAddress": "http://offering:8080/offers",
   "kafkaAddress": "kafka:9092",
   "serveAddress": ":8080",
   "basePath":     "/",

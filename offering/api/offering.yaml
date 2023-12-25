@@ -1,0 +1,105 @@
+openapi: 3.0.3
+info:
+  title: Offering Servcie
+  version: 1.0.0
+  description: |-
+    Отвечает за рассчет стоимости поездки и создание предложения с уникальными условиями.
+    Условия поездки могут быть использованы только клиентом для которого они были сформированы.
+tags:
+  - name: offering
+    description: Формирование предложений
+paths:
+  /offers:
+    post:
+      tags:
+        - offering
+      operationId: createOffer
+      description: Create offer
+      requestBody:
+        description: Create offer
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from:
+                  $ref: '#/components/schemas/LatlngLiteral'
+                to:
+                  $ref: '#/components/schemas/LatlngLiteral'
+                client_id:
+                  type: string
+      responses:
+        '200':
+          description: Success operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Offer'
+  /offers/{offer_id}:
+    get:
+      tags:
+        - offering
+      operationId: parseOffer
+      description: Parse offer
+      parameters:
+        - name: offer_id
+          in: path
+          description: ID of created offer
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Offer'
+        '404':
+          description: Offer not found
+components:
+  schemas:
+    Offer:
+      type: object
+      description: Terms offered to the client
+      properties:
+        id:
+          type: string
+        from:
+          $ref: '#/components/schemas/LatlngLiteral'
+        to:
+          $ref: '#/components/schemas/LatlngLiteral'
+        client_id:
+          type: string
+        price:
+          $ref: '#/components/schemas/Money'
+    LatlngLiteral:
+      type: object
+      title: LatLngLiteral
+      description: An object describing a specific location with Latitude and Longitude in decimal degrees.
+      required:
+        - lat
+        - lng
+      properties:
+        lat:
+          type: number
+          description: Latitude in decimal degrees
+        lng:
+          type: number
+          description: Longitude in decimal degrees
+    Money:
+      type: object
+      properties:
+        amount:
+          type: number
+          description: Amount expressed as a decimal number of major currency units
+          format: decimal
+          example: 99.95
+        currency:
+          type: string
+          description: 3 letter currency code as defined by ISO-4217
+          format: iso-4217
+          example: RUB
+      required:
+        - amount
+        - currency

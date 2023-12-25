@@ -504,18 +504,18 @@ func initPostgres(host string, port string, user string, password string) (*sql.
 	// Создание таблицы в postgres
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS trips_history (
 			"id" serial PRIMARY KEY,
-			"tripid" VARCHAR(255),
-    		"source" VARCHAR(255),
-    		"type" VARCHAR(255),
-    		"datacontenttype" VARCHAR(255),
-    		"time" VARCHAR(255),
-    		"driverid" VARCHAR(255),
-    		"reason" VARCHAR(255),
-    		"offerid" VARCHAR(255),
-    		"price" VARCHAR(255),
-    		"status" VARCHAR(255),
-    		"locfrom" VARCHAR(255),
-    		"locto" VARCHAR(255)
+			"tripid" TEXT,
+    		"source" TEXT,
+    		"type" TEXT,
+    		"datacontenttype" TEXT,
+    		"time" TEXT,
+    		"driverid" TEXT,
+    		"reason" TEXT,
+    		"offerid" TEXT,
+    		"price" TEXT,
+    		"status" TEXT,
+    		"locfrom" TEXT,
+    		"locto" TEXT
 	)`)
 	if err != nil {
 		return nil, err

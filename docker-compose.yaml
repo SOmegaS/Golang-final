@@ -3,21 +3,19 @@ services:
   mongodb:
     image: mongo
     restart: always
-    ports:
-      - "27017:27017"
     environment:
       MONGO_INITDB_DATABASE: my_mongo
     volumes:
       - ./data/mongodb:/data/db
     networks:
-      - project
+      - net
 
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
     environment:
-      - ZOOKEEPER_project_PORT=2181
+      - ZOOKEEPER_CLIENT_PORT=2181
     networks:
-      - project
+      - net
 
   kafka:
     image: confluentinc/cp-kafka:latest
@@ -27,12 +25,30 @@ services:
       - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
     networks:
-      - project
+      - net
 
-  project:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: trips_history
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: "pg_isready -d $$POSTGRES_DB -U $$POSTGRES_USER"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - net
+
+  client:
     build:
-      context: project
-      dockerfile: .docker/build.Dockerfile
+      context: client
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     restart: on-failure
@@ -40,16 +56,16 @@ services:
       - kafka
       - mongodb
     networks:
-      - project
+      - net
 
   offering:
     build:
       context: offering
       dockerfile: Dockerfile
     ports:
-      - "8888:8888"
+      - "8000:8080"
     networks:
-      - project
+      - net
 
   trip:
     build:
@@ -57,17 +73,14 @@ services:
       dockerfile: Dockerfile
     restart: on-failure
     networks:
-      - project
+      - net
     depends_on:
-      - kafka
-      - offering
-
-  tmp:
-    build:
-      context: tmp
-      dockerfile: Dockerfile
-    networks:
-      - project
+      kafka:
+        condition: service_started
+      offering:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
 networks:
-  project:
+  net:
