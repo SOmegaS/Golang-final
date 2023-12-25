@@ -32,6 +32,8 @@ services:
       retries: 5
     networks:
       - net
+    ports:
+      - "5432:5432"
 
   trip:
     build:
@@ -54,6 +56,14 @@ services:
       dockerfile: Dockerfile
     networks:
       - net
+
+# тестовый билд
+#  tmp:
+#    build:
+#      context: tmp
+#      dockerfile: Dockerfile
+#    networks:
+#      - net
 
 networks:
   net:
